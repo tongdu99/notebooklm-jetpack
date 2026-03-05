@@ -19,8 +19,9 @@ export default defineConfig({
   },
 
   manifest: {
-    name: 'NotebookLM Jetpack',
-    description: '一键导入网页、RSS、文档站点、Claude 对话到 NotebookLM，支持批量导入，完全免费无需登录',
+    name: '__MSG_extensionName__',
+    description: '__MSG_extensionDescription__',
+    default_locale: 'en',
     version,
     version_name: `${version}+${gitHash}`,
     permissions: [
@@ -39,7 +40,7 @@ export default defineConfig({
       'https://platform.claude.com/*',
     ],
     action: {
-      default_title: 'NotebookLM Jetpack',
+      default_title: '__MSG_actionTitle__',
       default_popup: 'popup.html',
     },
     externally_connectable: {

@@ -1,0 +1,14 @@
+{
+  "extensionName": {
+    "message": "NotebookLM Jetpack",
+    "description": "扩展名称"
+  },
+  "extensionDescription": {
+    "message": "给 NotebookLM 装上喷射背包 🚀 一键导入网页、Substack、播客、文档站、AI 对话，聚合多篇突破来源限制。",
+    "description": "Chrome Web Store 和 chrome://extensions 中显示的扩展描述。"
+  },
+  "actionTitle": {
+    "message": "NotebookLM Jetpack",
+    "description": "鼠标悬停在工具栏扩展图标时显示的提示文字。"
+  }
+}
