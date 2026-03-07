@@ -59,26 +59,29 @@ export default defineContentScript({
       injectRepairBanner();
     }, 2000);
 
-    // Re-check when source list changes (new sources added, sources removed, etc.)
+    // Re-check when source list changes (new sources added, sources removed, error state applied, etc.)
     let lastSourceCount = document.querySelectorAll('.single-source-container').length;
+    let lastErrorCount = document.querySelectorAll('.single-source-error-container').length;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const observer = new MutationObserver(() => {
       if (debounceTimer) return;
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
         const currentCount = document.querySelectorAll('.single-source-container').length;
+        const currentErrorCount = document.querySelectorAll('.single-source-error-container').length;
         const rescueBanner = document.getElementById('nlm-rescue-banner');
         const repairBanner = document.getElementById('nlm-repair-banner');
 
-        if (currentCount !== lastSourceCount) {
-          // Source count changed — remove and re-inject banners with updated counts
+        if (currentCount !== lastSourceCount || currentErrorCount !== lastErrorCount) {
+          // Source count or error count changed — remove and re-inject banners with updated counts
           lastSourceCount = currentCount;
+          lastErrorCount = currentErrorCount;
           rescueBanner?.remove();
           repairBanner?.remove();
           injectRescueBanner();
           injectRepairBanner();
         } else {
-          // Source count unchanged — just ensure banners exist
+          // No change — just ensure banners exist
           if (!rescueBanner) injectRescueBanner();
           if (!repairBanner) injectRepairBanner();
         }
@@ -86,7 +89,7 @@ export default defineContentScript({
     });
     const scrollArea = document.querySelector('.scroll-area-desktop');
     if (scrollArea) {
-      observer.observe(scrollArea, { childList: true, subtree: true });
+      observer.observe(scrollArea, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
     }
   },
 });
@@ -225,7 +228,25 @@ async function importTextToNotebookLM(text: string, title?: string): Promise<boo
       if (!getMainDialog()) break;
     }
 
-    // Note: NotebookLM now auto-renames pasted text sources, so manual rename is no longer needed.
+    // Smart rename: wait for NotebookLM to process, then check if it auto-renamed.
+    // If the source still has a default name, rename it manually. (Fixes #38)
+    if (title) {
+      await delay(3000);
+      const defaultNames = ['粘贴的文字', '复制的文字', 'Copied text', 'Pasted text', 'Pasted Text'];
+      const allSources = document.querySelectorAll('.single-source-container');
+      if (allSources.length > 0) {
+        const lastSource = allSources[allSources.length - 1];
+        const sourceTitle = lastSource.querySelector('.source-title')?.textContent?.trim();
+        if (sourceTitle && defaultNames.includes(sourceTitle)) {
+          console.log(`[importText] Source still has default name "${sourceTitle}", renaming to "${title}"`);
+          try {
+            await renameSource(sourceTitle, title);
+          } catch (e) {
+            console.warn('[importText] Rename failed (non-fatal):', e);
+          }
+        }
+      }
+    }
 
     return true;
   } catch (error) {
