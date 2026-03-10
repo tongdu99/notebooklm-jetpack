@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { toPng } from 'html-to-image';
+import { toJpeg, toPng, toCanvas, toBlob } from 'html-to-image';
+import { jsPDF } from 'jspdf';
+import { QRCodeSVG } from 'qrcode.react';
 import type { QAPair } from '@/lib/types';
+
+const QR_URL = 'https://youtu.be/9gPTuJZRHJk';
 
 interface ShareCardData {
   pairs: QAPair[];
@@ -10,74 +14,115 @@ interface ShareCardData {
   url: string;
 }
 
-const THEMES = {
-  claude: {
-    bg: 'linear-gradient(135deg, #2D1B0E 0%, #1A1008 100%)',
-    accent: '#D97706',
-    questionBg: 'rgba(217, 119, 6, 0.08)',
-    questionBorder: 'rgba(217, 119, 6, 0.2)',
-    answerBg: 'rgba(255, 255, 255, 0.04)',
-    answerBorder: 'rgba(255, 255, 255, 0.08)',
-    text: '#F5E6D3',
-    textMuted: '#A89279',
-    label: '#D97706',
-  },
-  chatgpt: {
-    bg: 'linear-gradient(135deg, #0D1B0E 0%, #081208 100%)',
-    accent: '#10A37F',
-    questionBg: 'rgba(16, 163, 127, 0.08)',
-    questionBorder: 'rgba(16, 163, 127, 0.2)',
-    answerBg: 'rgba(255, 255, 255, 0.04)',
-    answerBorder: 'rgba(255, 255, 255, 0.08)',
-    text: '#D3F5E6',
-    textMuted: '#79A892',
-    label: '#10A37F',
-  },
-  gemini: {
-    bg: 'linear-gradient(135deg, #0E1A2D 0%, #08101A 100%)',
-    accent: '#4285F4',
-    questionBg: 'rgba(66, 133, 244, 0.08)',
-    questionBorder: 'rgba(66, 133, 244, 0.2)',
-    answerBg: 'rgba(255, 255, 255, 0.04)',
-    answerBorder: 'rgba(255, 255, 255, 0.08)',
-    text: '#D3E3F5',
-    textMuted: '#7992A8',
-    label: '#4285F4',
-  },
-} as const;
+/** Detect Chinese locale */
+function isZh(): boolean {
+  return navigator.language.startsWith('zh');
+}
 
-type ThemeKey = keyof typeof THEMES;
+/** Bilingual strings */
+const i18n = {
+  question: () => isZh() ? '提问' : 'Question',
+  answer: () => isZh() ? '回答' : 'Answer',
+  madeWith: () => isZh()
+    ? 'Made with ❤️ by 绿皮火车'
+    : 'Made with ❤️ by Green Train Podcast',
+  platformLabel: (key: string, fallback: string) => {
+    const zh: Record<string, string> = {
+      claude: 'Claude · AI 对话',
+      chatgpt: 'ChatGPT · AI 对话',
+      gemini: 'Gemini · AI 对话',
+    };
+    const en: Record<string, string> = {
+      claude: 'Claude · AI Conversation',
+      chatgpt: 'ChatGPT · AI Conversation',
+      gemini: 'Gemini · AI Conversation',
+    };
+    const dict = isZh() ? zh : en;
+    return dict[key] || `${fallback} · AI`;
+  },
+};
+
+type ExportFormat = 'jpeg' | 'png' | 'pdf' | 'clipboard';
 
 export function ShareCardApp() {
   const [data, setData] = useState<ShareCardData | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showIsland, setShowIsland] = useState(true);
+  const [showDropdown, setShowDropdown] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     chrome.storage.local.get('shareCardData', (result) => {
       if (result.shareCardData) {
         setData(result.shareCardData);
-        // Clean up after reading
         chrome.storage.local.remove('shareCardData');
       }
     });
   }, []);
 
-  const themeKey = (data?.platform as ThemeKey) || 'claude';
-  const theme = THEMES[themeKey] || THEMES.claude;
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-  const handleSave = async () => {
+  const filename = data?.title || 'share-card';
+  const pixelRatio = 3;
+
+  const handleSave = async (format: ExportFormat = 'jpeg') => {
     if (!cardRef.current) return;
     setSaving(true);
+    setShowDropdown(false);
     try {
-      const dataUrl = await toPng(cardRef.current, {
-        pixelRatio: 3,
-        cacheBust: true,
-      });
-      const link = document.createElement('a');
-      link.download = `${data?.title || 'share-card'}.png`;
-      link.href = dataUrl;
-      link.click();
+      if (format === 'jpeg') {
+        const dataUrl = await toJpeg(cardRef.current, {
+          pixelRatio,
+          cacheBust: true,
+          quality: 0.92,
+          backgroundColor: '#f6f1ea',
+        });
+        downloadDataUrl(dataUrl, `${filename}.jpg`);
+      } else if (format === 'png') {
+        const dataUrl = await toPng(cardRef.current, {
+          pixelRatio,
+          cacheBust: true,
+        });
+        downloadDataUrl(dataUrl, `${filename}.png`);
+      } else if (format === 'pdf') {
+        const canvas = await toCanvas(cardRef.current, {
+          pixelRatio,
+          cacheBust: true,
+        });
+        const imgWidth = canvas.width;
+        const imgHeight = canvas.height;
+        // PDF page sized to card aspect ratio (in mm)
+        const pdfWidth = 100;
+        const pdfHeight = (imgHeight / imgWidth) * pdfWidth;
+        const pdf = new jsPDF({
+          orientation: pdfHeight > pdfWidth ? 'portrait' : 'landscape',
+          unit: 'mm',
+          format: [pdfWidth, pdfHeight],
+        });
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`${filename}.pdf`);
+      } else if (format === 'clipboard') {
+        const blob = await toBlob(cardRef.current, {
+          pixelRatio,
+          cacheBust: true,
+        });
+        if (blob) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob }),
+          ]);
+        }
+      }
     } catch (err) {
       console.error('Failed to save card:', err);
     } finally {
@@ -93,70 +138,105 @@ export function ShareCardApp() {
     );
   }
 
+  const platformKey = data.platform?.toLowerCase() || '';
+  const platformLabel = i18n.platformLabel(platformKey, data.platform);
+
   return (
     <div className="page">
       {/* Toolbar */}
       <div className="toolbar">
-        <button onClick={handleSave} disabled={saving} className="save-btn">
-          {saving ? 'Saving...' : '💾 Save as PNG'}
-        </button>
-        <span className="hint">3x resolution for crisp sharing</span>
+        <div className="save-group" ref={dropdownRef}>
+          <button
+            onClick={() => handleSave('jpeg')}
+            disabled={saving}
+            className="save-btn"
+          >
+            {saving ? 'Saving\u2026' : 'Save JPEG'}
+          </button>
+          <button
+            onClick={() => setShowDropdown(!showDropdown)}
+            disabled={saving}
+            className="save-btn save-dropdown-toggle"
+            aria-label="More formats"
+          >
+            ▾
+          </button>
+          {showDropdown && (
+            <div className="save-dropdown">
+              <button onClick={() => handleSave('png')}>PNG</button>
+              <button onClick={() => handleSave('pdf')}>PDF</button>
+              <button onClick={() => handleSave('clipboard')}>Clipboard</button>
+            </div>
+          )}
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={showIsland}
+            onChange={(e) => setShowIsland(e.target.checked)}
+            style={{ accentColor: '#c4553a' }}
+          />
+          <span className="hint">Dynamic Island</span>
+        </label>
+        <span className="hint" style={{ marginLeft: 'auto' }}>3x retina</span>
       </div>
 
       {/* Card preview */}
       <div className="card-wrapper">
-        <div
-          ref={cardRef}
-          className="card"
-          style={{ background: theme.bg }}
-        >
-          {/* Header */}
-          <div className="card-header">
-            <span className="platform-icon">{data.platformIcon}</span>
-            <div className="header-text">
-              <h1 style={{ color: theme.text }}>{data.title}</h1>
-              <p style={{ color: theme.textMuted }}>{data.platform}</p>
+        <div ref={cardRef} className="card">
+          {/* Safe area for Dynamic Island */}
+          {showIsland && (
+            <div className="card-safe-area">
+              <div className="dynamic-island" />
             </div>
+          )}
+
+          {/* Header */}
+          <div className="card-header" style={!showIsland ? { paddingTop: 28 } : undefined}>
+            <div className="platform-label">{platformLabel}</div>
+            <h1 className="card-title">{data.title}</h1>
           </div>
 
           {/* Q&A pairs */}
           <div className="pairs">
             {data.pairs.map((pair, i) => (
-              <div key={pair.id} className="pair">
-                {pair.question && (
-                  <div
-                    className="bubble question"
-                    style={{
-                      background: theme.questionBg,
-                      borderColor: theme.questionBorder,
-                    }}
-                  >
-                    <span className="role-label" style={{ color: theme.label }}>Q</span>
-                    <p style={{ color: theme.text }}>{pair.question}</p>
-                  </div>
-                )}
-                {pair.answer && (
-                  <div
-                    className="bubble answer"
-                    style={{
-                      background: theme.answerBg,
-                      borderColor: theme.answerBorder,
-                    }}
-                  >
-                    <span className="role-label" style={{ color: theme.textMuted }}>A</span>
-                    <p style={{ color: theme.text }}>{formatAnswer(pair.answer)}</p>
-                  </div>
-                )}
+              <div key={pair.id}>
+                <div className="pair">
+                  {pair.question && (
+                    <div className="question-block">
+                      <div className="role-label">{i18n.question()}</div>
+                      <p className="question-text">{pair.question}</p>
+                    </div>
+                  )}
+                  {pair.answer && (
+                    <div className="answer-block">
+                      <div className="answer-label">{i18n.answer()}</div>
+                      <p className="answer-text">{formatAnswer(pair.answer)}</p>
+                    </div>
+                  )}
+                </div>
                 {i < data.pairs.length - 1 && (
-                  <div className="divider" style={{ borderColor: theme.answerBorder }} />
+                  <div className="pair-divider">· · ·</div>
                 )}
               </div>
             ))}
           </div>
 
           {/* Footer */}
-          <div className="card-footer" style={{ borderColor: theme.answerBorder }}>
-            <span style={{ color: theme.textMuted }}>NotebookLM Jetpack</span>
+          <div className="card-footer">
+            <div className="footer-left">
+              <span className="footer-brand">NotebookLM Jetpack</span>
+              <span className="footer-made-with">{i18n.madeWith()}</span>
+            </div>
+            <div className="footer-qr">
+              <QRCodeSVG
+                value={QR_URL}
+                size={52}
+                bgColor="transparent"
+                fgColor="#8a7e70"
+                level="M"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -164,9 +244,15 @@ export function ShareCardApp() {
   );
 }
 
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = dataUrl;
+  link.click();
+}
+
 /** Truncate long answers for card display */
 function formatAnswer(text: string): string {
-  // Remove markdown formatting for cleaner card display
   let clean = text
     .replace(/```[\s\S]*?```/g, '[code block]')
     .replace(/`([^`]+)`/g, '$1')
@@ -179,7 +265,7 @@ function formatAnswer(text: string): string {
     .replace(/\n{3,}/g, '\n\n');
 
   if (clean.length > 600) {
-    clean = clean.slice(0, 600).trimEnd() + '...';
+    clean = clean.slice(0, 600).trimEnd() + '…';
   }
   return clean;
 }

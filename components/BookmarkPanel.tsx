@@ -392,7 +392,7 @@ export function BookmarkPanel({ onProgress }: Props) {
                   {pdfState === 'copied' ? t('clipboardCopied') : t('pdfDownloaded')}
                 </p>
               ) : (
-                <div className="flex gap-2">
+                <div className="flex gap-1.5">
                   <button
                     onClick={() => handleExport('pdf')}
                     disabled={state === 'importing'}
@@ -404,10 +404,10 @@ export function BookmarkPanel({ onProgress }: Props) {
                   <button
                     onClick={() => handleExport('clipboard')}
                     disabled={state === 'importing'}
-                    className="btn-press flex-1 py-2 bg-emerald-500 text-white text-sm rounded-lg hover:bg-emerald-500/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 shadow-btn hover:shadow-btn-hover transition-all duration-150"
+                    className="btn-press py-2 px-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-500/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-btn hover:shadow-btn-hover transition-all duration-150"
+                    title={t('copyToClipboard')}
                   >
                     <Copy className="w-4 h-4" />
-                    {t('copyToClipboard')}
                   </button>
                 </div>
               )}
