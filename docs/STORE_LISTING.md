@@ -83,6 +83,7 @@ NotebookLM 的网址导入对很多网站水土不服，Jetpack 逐一击破：
 • 符合 Chrome Manifest V3 最新安全规范
 
 Made by 绿皮火车 🚂
+https://www.youtube.com/@greentrainpodcast
 
 ---
 

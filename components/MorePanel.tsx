@@ -284,9 +284,14 @@ export function MorePanel({ onProgress }: Props) {
             <p className="text-xs text-gray-400 font-mono tabular-nums">
               v{__VERSION__}+{__GIT_HASH__}
             </p>
-            <p className="text-xs text-gray-400 flex items-center justify-center gap-1">
+            <a
+              href="https://www.youtube.com/@greentrainpodcast"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-gray-400 flex items-center justify-center gap-1 hover:text-red-500 transition-colors"
+            >
               Made with <Heart className="w-3 h-3 text-red-400 inline" /> by {t('more.madeBy')}
-            </p>
+            </a>
           </div>
         </div>
       </div>

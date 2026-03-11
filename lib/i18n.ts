@@ -202,7 +202,7 @@ const zh = {
   'more.ytChannel': '绿皮火车播客',
   'more.ytDesc': 'YouTube 频道 · 教程与分享',
   'more.ghDesc': '开源项目 · 欢迎 Star',
-  'more.madeBy': '绿皮火车播客',
+  'more.madeBy': 'YouTuber「绿皮火车」',
 
   // ── RssImport ──
   'rss.feedUrl': 'RSS 订阅地址',
@@ -423,7 +423,7 @@ const en: Record<keyof typeof zh, string> = {
   'more.ytChannel': 'Green Train Podcast',
   'more.ytDesc': 'YouTube Channel · Tutorials',
   'more.ghDesc': 'Open Source · Star',
-  'more.madeBy': 'Green Train Podcast',
+  'more.madeBy': 'YouTuber「绿皮火车」',
 
   // ── RssImport ──
   'rss.feedUrl': 'RSS Feed URL',

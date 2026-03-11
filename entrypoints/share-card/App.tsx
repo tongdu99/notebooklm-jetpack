@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { toJpeg, toPng, toCanvas, toBlob } from 'html-to-image';
+import { toCanvas } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { QRCodeSVG } from 'qrcode.react';
 import type { QAPair } from '@/lib/types';
@@ -24,8 +24,8 @@ const i18n = {
   question: () => isZh() ? '提问' : 'Question',
   answer: () => isZh() ? '回答' : 'Answer',
   madeWith: () => isZh()
-    ? 'Made with ❤️ by 绿皮火车'
-    : 'Made with ❤️ by Green Train Podcast',
+    ? 'Made with ❤️ by YouTuber「绿皮火车」'
+    : 'Made with ❤️ by YouTuber「绿皮火车」',
   platformLabel: (key: string, fallback: string) => {
     const zh: Record<string, string> = {
       claude: 'Claude · AI 对话',
@@ -75,33 +75,42 @@ export function ShareCardApp() {
   const filename = data?.title || 'share-card';
   const pixelRatio = 3;
 
+  // Cache the high-res canvas to avoid re-rendering fonts/DOM on each export
+  const canvasCacheRef = useRef<HTMLCanvasElement | null>(null);
+  const cacheKeyRef = useRef<string>('');
+
+  const getCanvas = async (): Promise<HTMLCanvasElement> => {
+    if (!cardRef.current) throw new Error('Card ref not ready');
+    // Invalidate cache when island toggle or content changes
+    const key = `${showIsland}-${data?.pairs.length}-${data?.title}`;
+    if (canvasCacheRef.current && cacheKeyRef.current === key) {
+      return canvasCacheRef.current;
+    }
+    const canvas = await toCanvas(cardRef.current, {
+      pixelRatio,
+      backgroundColor: '#f6f1ea',
+    });
+    canvasCacheRef.current = canvas;
+    cacheKeyRef.current = key;
+    return canvas;
+  };
+
   const handleSave = async (format: ExportFormat = 'jpeg') => {
     if (!cardRef.current) return;
     setSaving(true);
     setShowDropdown(false);
     try {
+      const canvas = await getCanvas();
+
       if (format === 'jpeg') {
-        const dataUrl = await toJpeg(cardRef.current, {
-          pixelRatio,
-          cacheBust: true,
-          quality: 0.92,
-          backgroundColor: '#f6f1ea',
-        });
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
         downloadDataUrl(dataUrl, `${filename}.jpg`);
       } else if (format === 'png') {
-        const dataUrl = await toPng(cardRef.current, {
-          pixelRatio,
-          cacheBust: true,
-        });
+        const dataUrl = canvas.toDataURL('image/png');
         downloadDataUrl(dataUrl, `${filename}.png`);
       } else if (format === 'pdf') {
-        const canvas = await toCanvas(cardRef.current, {
-          pixelRatio,
-          cacheBust: true,
-        });
         const imgWidth = canvas.width;
         const imgHeight = canvas.height;
-        // PDF page sized to card aspect ratio (in mm)
         const pdfWidth = 100;
         const pdfHeight = (imgHeight / imgWidth) * pdfWidth;
         const pdf = new jsPDF({
@@ -113,15 +122,13 @@ export function ShareCardApp() {
         pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
         pdf.save(`${filename}.pdf`);
       } else if (format === 'clipboard') {
-        const blob = await toBlob(cardRef.current, {
-          pixelRatio,
-          cacheBust: true,
-        });
-        if (blob) {
-          await navigator.clipboard.write([
-            new ClipboardItem({ 'image/png': blob }),
-          ]);
-        }
+        canvas.toBlob(async (blob) => {
+          if (blob) {
+            await navigator.clipboard.write([
+              new ClipboardItem({ 'image/png': blob }),
+            ]);
+          }
+        }, 'image/png');
       }
     } catch (err) {
       console.error('Failed to save card:', err);
@@ -211,7 +218,7 @@ export function ShareCardApp() {
                   {pair.answer && (
                     <div className="answer-block">
                       <div className="answer-label">{i18n.answer()}</div>
-                      <p className="answer-text">{formatAnswer(pair.answer)}</p>
+                      <div className="answer-text">{renderAnswer(pair.answer)}</div>
                     </div>
                   )}
                 </div>
@@ -251,11 +258,9 @@ function downloadDataUrl(dataUrl: string, filename: string) {
   link.click();
 }
 
-/** Truncate long answers for card display */
-function formatAnswer(text: string): string {
-  let clean = text
-    .replace(/```[\s\S]*?```/g, '[code block]')
-    .replace(/`([^`]+)`/g, '$1')
+/** Clean markdown formatting for inline text segments */
+function cleanInlineMarkdown(text: string): string {
+  return text
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
@@ -263,9 +268,36 @@ function formatAnswer(text: string): string {
     .replace(/^\s*\d+\.\s+/gm, '')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/\n{3,}/g, '\n\n');
+}
 
-  if (clean.length > 600) {
-    clean = clean.slice(0, 600).trimEnd() + '…';
-  }
-  return clean;
+/** Render answer with code blocks styled, inline code highlighted */
+function renderAnswer(text: string): React.ReactNode {
+  // Split by fenced code blocks: ```lang\n...\n```
+  const parts = text.split(/(```[\s\S]*?```)/g);
+
+  return parts.map((part, i) => {
+    // Fenced code block
+    if (part.startsWith('```')) {
+      const match = part.match(/^```(\w*)\n?([\s\S]*?)```$/);
+      const lang = match?.[1] || '';
+      const code = match?.[2]?.replace(/\n$/, '') || part.slice(3, -3);
+      return (
+        <div key={i} className="code-block">
+          {lang && <span className="code-lang">{lang}</span>}
+          <pre><code>{code}</code></pre>
+        </div>
+      );
+    }
+
+    // Normal text — render inline code with styling
+    const cleaned = cleanInlineMarkdown(part);
+    const inlineParts = cleaned.split(/(`[^`]+`)/g);
+
+    return inlineParts.map((seg, j) => {
+      if (seg.startsWith('`') && seg.endsWith('`')) {
+        return <code key={`${i}-${j}`} className="inline-code">{seg.slice(1, -1)}</code>;
+      }
+      return <span key={`${i}-${j}`}>{seg}</span>;
+    });
+  });
 }
