@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, Loader2, CheckCircle, AlertCircle, Search, ChevronRight, FileDown, Copy, Rocket } from 'lucide-react';
+import { BookOpen, Loader2, CheckCircle, AlertCircle, Search, ChevronRight, FileDown, Copy, Rocket, Link, Check } from 'lucide-react';
 import type { ImportProgress, DocSiteInfo, DocPageItem, DocFramework } from '@/lib/types';
 import type { PdfProgress } from '@/services/pdf-generator';
 import { t } from '@/lib/i18n';
@@ -20,6 +20,7 @@ export function DocsImport({ onProgress }: Props) {
   const [pdfProgress, setPdfProgress] = useState<PdfProgress | null>(null);
   const [isOnNotebookLM, setIsOnNotebookLM] = useState(false);
   const [manualUrl, setManualUrl] = useState('');
+  const [urlsCopied, setUrlsCopied] = useState(false);
 
   const FRAMEWORK_LABELS: Record<DocFramework, string> = {
     docusaurus: 'Docusaurus',
@@ -170,6 +171,22 @@ export function DocsImport({ onProgress }: Props) {
 
   const handleDeselectAll = () => {
     setSelectedPages(new Set());
+  };
+
+  const handleCopyUrls = async () => {
+    if (!siteInfo || selectedPages.size === 0) return;
+    const urls = siteInfo.pages
+      .filter((p) => selectedPages.has(p.url))
+      .map((p) => p.url)
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(urls);
+      setUrlsCopied(true);
+      setTimeout(() => setUrlsCopied(false), 2000);
+    } catch {
+      setError(t('clipboardFailed'));
+      setState('error');
+    }
   };
 
   const handleImport = async () => {
@@ -358,12 +375,20 @@ export function DocsImport({ onProgress }: Props) {
             <span className="text-sm text-gray-600">
               {t('docs.selectedPages', { selected: selectedPages.size, total: siteInfo.pages.length })}
             </span>
-            <div className="flex gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs">
               <button onClick={handleSelectAll} className="text-notebooklm-blue hover:underline transition-colors duration-150">
                 {t('selectAll')}
               </button>
               <button onClick={handleDeselectAll} className="text-gray-400 hover:underline transition-colors duration-150">
                 {t('deselectAll')}
+              </button>
+              <button
+                onClick={handleCopyUrls}
+                disabled={selectedPages.size === 0}
+                className="p-0.5 text-gray-400 hover:text-notebooklm-blue disabled:opacity-30 disabled:cursor-not-allowed transition-colors duration-150"
+                title={urlsCopied ? t('docs.urlsCopied', { count: selectedPages.size }) : t('docs.copyUrls')}
+              >
+                {urlsCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Link className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
