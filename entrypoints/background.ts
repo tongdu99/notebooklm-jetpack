@@ -972,6 +972,50 @@ async function handleMessage(message: MessageType): Promise<unknown> {
     case 'IS_BOOKMARKED':
       return await isBookmarked(message.url);
 
+    // ── Notebook Info ──
+    case 'GET_NOTEBOOKS': {
+      // Find all NotebookLM tabs and query each for notebook info
+      const nlmTabs = await chrome.tabs.query({ url: 'https://notebooklm.google.com/*' });
+      const notebooks: Array<{ id: string; title: string; url: string }> = [];
+      const seen = new Set<string>();
+      let current: { id: string; title: string; url: string } | null = null;
+
+      for (const tab of nlmTabs) {
+        if (!tab.id) continue;
+        try {
+          // Ensure content script is injected
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content-scripts/notebooklm.js'],
+          }).catch(() => {});
+
+          const resp = await new Promise<{ success: boolean; data?: { current: { id: string; title: string; url: string } | null; list: Array<{ id: string; title: string; url: string }> } }>((resolve) => {
+            chrome.tabs.sendMessage(tab.id!, { type: 'GET_NOTEBOOK_INFO' }, (r) => {
+              if (chrome.runtime.lastError) resolve({ success: false });
+              else resolve(r || { success: false });
+            });
+          });
+
+          if (resp.success && resp.data) {
+            if (resp.data.current && !seen.has(resp.data.current.id)) {
+              seen.add(resp.data.current.id);
+              current = resp.data.current;
+              notebooks.push(resp.data.current);
+            }
+            for (const nb of resp.data.list) {
+              if (!seen.has(nb.id)) {
+                seen.add(nb.id);
+                notebooks.push(nb);
+              }
+            }
+          }
+        } catch {
+          // Tab may not be ready
+        }
+      }
+      return { current, notebooks };
+    }
+
     default:
       throw new Error('Unknown message type');
   }

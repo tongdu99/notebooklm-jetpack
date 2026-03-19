@@ -84,7 +84,16 @@ export type MessageType =
   | { type: 'GET_BOOKMARKS' }
   | { type: 'GET_COLLECTIONS' }
   | { type: 'CREATE_COLLECTION'; name: string }
-  | { type: 'IS_BOOKMARKED'; url: string };
+  | { type: 'IS_BOOKMARKED'; url: string }
+  // Notebook info
+  | { type: 'GET_NOTEBOOKS' };
+
+// Notebook info returned from content script
+export interface NotebookInfo {
+  id: string;
+  title: string;
+  url: string;
+}
 
 export type MessageResponse =
   | { success: true; data: unknown }

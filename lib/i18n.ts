@@ -46,6 +46,28 @@ const zh = {
   'app.tabAI': 'AI 对话',
   'app.tabMore': '更多',
 
+  // ── Notebook Selector ──
+  'notebook.noNotebook': '请先打开 NotebookLM',
+  'notebook.open': '打开',
+  'notebook.current': '当前笔记本',
+  'notebook.refresh': '刷新',
+  'notebook.openInTab': '在标签页中打开',
+  'notebook.active': '当前',
+
+  // ── Onboarding ──
+  'onboarding.step1Title': '欢迎使用 NotebookLM Jetpack',
+  'onboarding.step1Desc': '一键将多种来源的内容批量导入 NotebookLM，加速你的研究和学习。',
+  'onboarding.step2Title': '收藏网页，批量导入',
+  'onboarding.step2Desc': '浏览时收藏感兴趣的页面到收藏夹，然后一键批量导入 NotebookLM。也支持文档站、播客、AI 对话等来源。',
+  'onboarding.step3Title': '开始使用',
+  'onboarding.step3Desc': '先打开 NotebookLM 并进入一个笔记本，然后回到这里开始导入内容。上方会显示当前连接的笔记本。',
+  'onboarding.featureDocs': '文档站',
+  'onboarding.featurePodcast': '播客',
+  'onboarding.featureAI': 'AI 对话',
+  'onboarding.featureBookmark': '网页收藏',
+  'onboarding.next': '下一步',
+  'onboarding.getStarted': '开始使用',
+
   // ── DocsImport ──
   'docs.yuque': '语雀',
   'docs.wechatDocs': '微信文档',
@@ -268,6 +290,28 @@ const en: Record<keyof typeof zh, string> = {
   'app.tabPodcast': 'Podcast',
   'app.tabAI': 'AI Chat',
   'app.tabMore': 'More',
+
+  // ── Notebook Selector ──
+  'notebook.noNotebook': 'Open NotebookLM first',
+  'notebook.open': 'Open',
+  'notebook.current': 'Current notebook',
+  'notebook.refresh': 'Refresh',
+  'notebook.openInTab': 'Open in tab',
+  'notebook.active': 'Active',
+
+  // ── Onboarding ──
+  'onboarding.step1Title': 'Welcome to NotebookLM Jetpack',
+  'onboarding.step1Desc': 'Bulk-import content from multiple sources into NotebookLM to accelerate your research and learning.',
+  'onboarding.step2Title': 'Bookmark pages, import in bulk',
+  'onboarding.step2Desc': 'Save interesting pages to bookmarks as you browse, then bulk-import them to NotebookLM. Also supports doc sites, podcasts, AI conversations, and more.',
+  'onboarding.step3Title': 'Get started',
+  'onboarding.step3Desc': 'First, open NotebookLM and enter a notebook. Then come back here to start importing. The current notebook will show above.',
+  'onboarding.featureDocs': 'Doc sites',
+  'onboarding.featurePodcast': 'Podcasts',
+  'onboarding.featureAI': 'AI chats',
+  'onboarding.featureBookmark': 'Bookmarks',
+  'onboarding.next': 'Next',
+  'onboarding.getStarted': 'Get Started',
 
   // ── DocsImport ──
   'docs.yuque': 'Yuque',

@@ -51,6 +51,12 @@ export default defineContentScript({
         sendResponse({ success: true });
         return true;
       }
+
+      if (message.type === 'GET_NOTEBOOK_INFO') {
+        const info = getNotebookInfo();
+        sendResponse({ success: true, data: info });
+        return true;
+      }
     });
 
     // Auto-inject banners if issues detected
@@ -1820,4 +1826,67 @@ async function waitForElement<T extends Element = Element>(
   }
 
   return null;
+}
+
+// ─── Notebook Info ──────────────────────────────────────────
+
+interface NotebookInfo {
+  id: string;
+  title: string;
+  url: string;
+}
+
+/**
+ * Extract current notebook info from the page.
+ * Works on both the notebook page (single notebook) and the home page (list).
+ */
+function getNotebookInfo(): { current: NotebookInfo | null; list: NotebookInfo[] } {
+  const baseUrl = 'https://notebooklm.google.com';
+  const currentUrl = window.location.href;
+  let current: NotebookInfo | null = null;
+
+  // If we're inside a notebook, extract its info
+  const notebookMatch = currentUrl.match(/\/notebook\/([a-zA-Z0-9_-]+)/);
+  if (notebookMatch) {
+    const id = notebookMatch[1];
+    // Try to get title from the page header
+    const titleEl = document.querySelector<HTMLElement>(
+      '.notebook-title, [class*="notebook-title"], [class*="project-title"], h1'
+    );
+    const title = titleEl?.textContent?.trim()
+      || document.title.replace(/ - NotebookLM$/, '').trim()
+      || 'Untitled';
+    current = { id, title, url: `${baseUrl}/notebook/${id}` };
+  }
+
+  // Try to get notebook list from the home page
+  const list: NotebookInfo[] = [];
+
+  // Strategy 1: Look for notebook cards/links on the home page
+  const notebookLinks = document.querySelectorAll<HTMLAnchorElement>(
+    'a[href*="/notebook/"]'
+  );
+  const seen = new Set<string>();
+  for (const link of notebookLinks) {
+    const match = link.href.match(/\/notebook\/([a-zA-Z0-9_-]+)/);
+    if (!match || seen.has(match[1])) continue;
+    seen.add(match[1]);
+
+    // Try to find the title from the link or its parent card
+    const card = link.closest('[class*="card"], [class*="project"], [class*="notebook"]') || link;
+    const titleEl = card.querySelector<HTMLElement>(
+      '[class*="title"], [class*="name"], h2, h3, .mat-headline, .mat-title'
+    );
+    const title = titleEl?.textContent?.trim()
+      || link.textContent?.trim()
+      || 'Untitled';
+
+    list.push({
+      id: match[1],
+      title,
+      url: `${baseUrl}/notebook/${match[1]}`,
+    });
+  }
+
+  return { current, list };
 }
