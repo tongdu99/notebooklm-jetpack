@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ExternalLink, RefreshCw, BookOpen } from 'lucide-react';
+import { ChevronDown, ExternalLink, RefreshCw, Pencil } from 'lucide-react';
 import type { NotebookInfo } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
 
@@ -31,102 +31,109 @@ export function NotebookSelector() {
     fetchNotebooks();
   }, [fetchNotebooks]);
 
-  const activeNotebook = data?.current || null;
+  const activeNotebook = data?.current || (data?.notebooks?.[0] ?? null);
   const notebooks = data?.notebooks || [];
 
-  const handleOpenNotebook = (url: string) => {
-    chrome.tabs.create({ url });
+  const handleNavigate = (url: string) => {
+    chrome.tabs.query({ url: 'https://notebooklm.google.com/*' }, (tabs) => {
+      if (tabs.length > 0 && tabs[0].id) {
+        // Navigate existing NLM tab
+        chrome.tabs.update(tabs[0].id, { url, active: true });
+      } else {
+        chrome.tabs.create({ url });
+      }
+    });
     setOpen(false);
   };
 
-  // No NotebookLM tabs open
+  // No NotebookLM tabs open — compact prompt
   if (!data || notebooks.length === 0) {
     return (
-      <div className="bg-surface-sunken rounded-xl p-3 shadow-soft">
-        <div className="flex items-center gap-2">
-          <BookOpen className="w-4 h-4 text-notebooklm-blue flex-shrink-0" />
-          <span className="flex-1 text-sm text-gray-500">
-            {t('notebook.noNotebook')}
-          </span>
-          <button
-            onClick={() => chrome.tabs.create({ url: 'https://notebooklm.google.com' })}
-            className="btn-press flex items-center gap-1 px-2.5 py-1.5 bg-notebooklm-blue text-white text-xs rounded-md hover:bg-blue-600 transition-colors"
-          >
-            <ExternalLink className="w-3 h-3" />
-            {t('notebook.open')}
-          </button>
+      <button
+        onClick={() => {
+          chrome.tabs.create({ url: 'https://notebooklm.google.com' });
+        }}
+        className="w-full flex items-center gap-2.5 rounded-xl border border-dashed border-gray-200 px-3 py-2.5 hover:border-notebooklm-blue/40 hover:bg-blue-50/30 transition-all group"
+      >
+        <div className="w-8 h-8 rounded-lg bg-gray-100 group-hover:bg-blue-100 flex items-center justify-center transition-colors">
+          <img src="/icons/icon-48.png" alt="" className="w-5 h-5 opacity-40 group-hover:opacity-70 transition-opacity" />
         </div>
-      </div>
+        <div className="flex-1 text-left">
+          <p className="text-sm text-gray-400 group-hover:text-notebooklm-blue transition-colors">
+            {t('notebook.noNotebook')}
+          </p>
+        </div>
+        <ExternalLink className="w-3.5 h-3.5 text-gray-300 group-hover:text-notebooklm-blue transition-colors" />
+      </button>
     );
   }
 
   return (
-    <div className="bg-surface-sunken rounded-xl shadow-soft overflow-hidden">
-      {/* Current notebook display */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 transition-colors"
-      >
-        <BookOpen className="w-4 h-4 text-notebooklm-blue flex-shrink-0" />
-        <div className="flex-1 min-w-0 text-left">
-          <p className="text-xs text-gray-400">{t('notebook.current')}</p>
-          <p className="text-sm font-medium text-gray-800 truncate">
-            {activeNotebook?.title || notebooks[0]?.title || 'NotebookLM'}
+    <div className="relative">
+      {/* Current notebook — main display */}
+      <div className="flex items-center gap-2.5 rounded-xl border border-gray-200/80 bg-white px-3 py-2">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-gray-800 truncate">
+            {activeNotebook?.title || 'NotebookLM'}
           </p>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          {activeNotebook && (
+            <button
+              onClick={() => handleNavigate(activeNotebook.url)}
+              className="p-1.5 text-gray-400 hover:text-notebooklm-blue rounded-md hover:bg-blue-50 transition-colors"
+              title={t('notebook.openInTab')}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation();
               fetchNotebooks();
             }}
-            className="p-1 text-gray-400 hover:text-notebooklm-blue rounded transition-colors"
+            className="p-1.5 text-gray-400 hover:text-notebooklm-blue rounded-md hover:bg-blue-50 transition-colors"
             title={t('notebook.refresh')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
-          {activeNotebook && (
+          {notebooks.length > 1 && (
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleOpenNotebook(activeNotebook.url);
-              }}
-              className="p-1 text-gray-400 hover:text-notebooklm-blue rounded transition-colors"
-              title={t('notebook.openInTab')}
+              onClick={() => setOpen(!open)}
+              className="p-1.5 text-gray-400 hover:text-notebooklm-blue rounded-md hover:bg-blue-50 transition-colors"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
             </button>
           )}
-          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
         </div>
-      </button>
+      </div>
 
-      {/* Notebook list dropdown */}
+      {/* Dropdown list */}
       {open && notebooks.length > 1 && (
-        <div className="border-t border-gray-100 max-h-[200px] overflow-y-auto">
-          {notebooks.map((nb) => (
-            <button
-              key={nb.id}
-              onClick={() => handleOpenNotebook(nb.url)}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-blue-50/50 transition-colors ${
-                nb.id === activeNotebook?.id ? 'bg-blue-50/30' : ''
-              }`}
-            >
-              <BookOpen className={`w-3.5 h-3.5 flex-shrink-0 ${
-                nb.id === activeNotebook?.id ? 'text-notebooklm-blue' : 'text-gray-400'
-              }`} />
-              <span className={`text-xs truncate ${
-                nb.id === activeNotebook?.id ? 'text-notebooklm-blue font-medium' : 'text-gray-600'
-              }`}>
-                {nb.title}
-              </span>
-              {nb.id === activeNotebook?.id && (
-                <span className="ml-auto text-[10px] text-notebooklm-blue bg-blue-50 px-1.5 py-0.5 rounded">
-                  {t('notebook.active')}
+        <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-xl shadow-lg max-h-[240px] overflow-y-auto">
+          {notebooks.map((nb) => {
+            const isActive = nb.id === activeNotebook?.id;
+            return (
+              <button
+                key={nb.id}
+                onClick={() => handleNavigate(nb.url)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${
+                  isActive ? 'bg-blue-50/50' : 'hover:bg-gray-50'
+                }`}
+              >
+                <span className={`flex-1 text-xs truncate ${
+                  isActive ? 'text-notebooklm-blue font-medium' : 'text-gray-600'
+                }`}>
+                  {nb.title}
                 </span>
-              )}
-            </button>
-          ))}
+                {isActive && (
+                  <span className="text-[9px] text-notebooklm-blue bg-blue-100/60 px-1.5 py-0.5 rounded-full font-medium">
+                    {t('notebook.active')}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
