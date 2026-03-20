@@ -58,8 +58,21 @@ function waitForTabLoad(tabId: number, timeout = 30000): Promise<void> {
 }
 
 // Ensure the target notebook is open in a tab and ready for import.
-// Strategy: find existing tab on the right notebook, or open a new one.
-async function getNotebookLMTab(): Promise<chrome.tabs.Tab> {
+// If targetTabId is provided (from sender context), use it directly.
+// Otherwise: find existing tab on the right notebook, or open a new one.
+async function getNotebookLMTab(targetTabId?: number): Promise<chrome.tabs.Tab> {
+  // If caller knows the exact tab, use it directly
+  if (targetTabId) {
+    try {
+      const tab = await chrome.tabs.get(targetTabId);
+      if (tab.url?.includes('notebooklm.google.com/notebook/')) {
+        return tab;
+      }
+    } catch {
+      // Tab may have been closed, fall through to query logic
+    }
+  }
+
   const selected = await getSelectedNotebook();
   const targetUrl = selected?.url || NOTEBOOKLM_CONFIG.baseUrl;
 
@@ -94,9 +107,9 @@ async function ensureContentScript(tabId: number): Promise<void> {
 }
 
 // Import a single URL to NotebookLM
-export async function importUrl(url: string): Promise<boolean> {
+export async function importUrl(url: string, targetTabId?: number): Promise<boolean> {
   try {
-    const tab = await getNotebookLMTab();
+    const tab = await getNotebookLMTab(targetTabId);
     if (!tab.id) throw new Error('Failed to get NotebookLM tab');
 
     await ensureContentScript(tab.id);
@@ -118,7 +131,8 @@ export async function importUrl(url: string): Promise<boolean> {
 // Import multiple URLs with progress callback
 export async function importBatch(
   urls: string[],
-  onProgress?: (progress: ImportProgress) => void
+  onProgress?: (progress: ImportProgress) => void,
+  targetTabId?: number
 ): Promise<ImportProgress> {
   const items: ImportItem[] = urls.map((url) => ({
     url,
@@ -132,7 +146,7 @@ export async function importBatch(
   };
 
   // Get NotebookLM tab first
-  const tab = await getNotebookLMTab();
+  const tab = await getNotebookLMTab(targetTabId);
   if (!tab.id) throw new Error('Failed to get NotebookLM tab');
 
   await ensureContentScript(tab.id);
@@ -172,9 +186,9 @@ export async function importBatch(
 }
 
 // Import text content to NotebookLM
-export async function importText(text: string, title?: string): Promise<boolean> {
+export async function importText(text: string, title?: string, targetTabId?: number): Promise<boolean> {
   try {
-    const tab = await getNotebookLMTab();
+    const tab = await getNotebookLMTab(targetTabId);
     if (!tab.id) throw new Error('Failed to get NotebookLM tab');
 
     await ensureContentScript(tab.id);

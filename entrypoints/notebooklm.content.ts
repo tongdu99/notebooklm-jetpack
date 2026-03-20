@@ -112,12 +112,22 @@ export default defineContentScript({
     let delayedRecheckTimer: ReturnType<typeof setTimeout> | null = null;
 
     function recheckBanners(): void {
+      // Don't destroy banners that are mid-operation (repairing/rescuing/done)
       const rescueBanner = document.getElementById('nlm-rescue-banner');
+      const rescueBtn = document.getElementById('nlm-rescue-btn') as HTMLButtonElement | null;
+      const rescueBusy = rescueBtn?.disabled === true;
+      if (!rescueBusy) {
+        rescueBanner?.remove();
+        injectRescueBanner();
+      }
+
       const repairBanner = document.getElementById('nlm-repair-banner');
-      rescueBanner?.remove();
-      repairBanner?.remove();
-      injectRescueBanner();
-      injectRepairBanner();
+      const repairBtn = document.getElementById('nlm-repair-btn') as HTMLButtonElement | null;
+      const repairBusy = repairBtn?.disabled === true;
+      if (!repairBusy) {
+        repairBanner?.remove();
+        injectRepairBanner();
+      }
     }
 
     const observer = new MutationObserver(() => {
@@ -1392,9 +1402,39 @@ function injectRescueBanner(): void {
     if (details) details.style.display = 'block';
 
     // Send rescue request to background
-    chrome.runtime.sendMessage({ type: 'RESCUE_SOURCES', urls: failedUrls }, (resp) => {
-      const results = resp?.success ? resp.data : (resp || []);
-      updateInlineBanner(results);
+    const port = chrome.runtime.connect({ name: 'rescue-sources' });
+    port.postMessage({ urls: failedUrls });
+    port.onMessage.addListener((msg) => {
+      if (msg.phase === 'item-start') {
+        const item = document.querySelector(`#nlm-rescue-details .nlm-rescue-item[data-url="${CSS.escape(msg.url)}"]`);
+        const statusEl = item?.querySelector('.nlm-rescue-status');
+        if (statusEl) {
+          statusEl.className = 'nlm-rescue-status';
+          statusEl.textContent = '';
+          const spinner = document.createElement('span');
+          spinner.className = 'nlm-rescue-spinner';
+          statusEl.appendChild(spinner);
+        }
+      } else if (msg.phase === 'item-done') {
+        const result = msg.result as { url: string; status: string; title?: string; error?: string };
+        const item = document.querySelector(`#nlm-rescue-details .nlm-rescue-item[data-url="${CSS.escape(result.url)}"]`);
+        const statusEl = item?.querySelector('.nlm-rescue-status');
+        if (statusEl) {
+          if (result.status === 'success') {
+            statusEl.className = 'nlm-rescue-status nlm-rescue-success';
+            statusEl.textContent = `✓ ${result.title || ct('success')}`;
+          } else {
+            statusEl.className = 'nlm-rescue-status nlm-rescue-error';
+            statusEl.textContent = `✗ ${result.error || ct('failed')}`;
+          }
+        }
+      } else if (msg.phase === 'done') {
+        updateInlineBanner(msg.results || []);
+        port.disconnect();
+      } else if (msg.phase === 'error') {
+        updateInlineBanner([]);
+        port.disconnect();
+      }
     });
   });
 
@@ -1647,9 +1687,39 @@ function injectRepairBanner(): void {
     const details = document.getElementById('nlm-repair-details');
     if (details) details.style.display = 'block';
 
-    chrome.runtime.sendMessage({ type: 'REPAIR_WECHAT_SOURCES', urls: wechatUrls }, (resp) => {
-      const results = resp?.success ? resp.data : (resp || []);
-      updateRepairBanner(results, wechatUrls);
+    const port = chrome.runtime.connect({ name: 'repair-wechat' });
+    port.postMessage({ urls: wechatUrls });
+    port.onMessage.addListener((msg) => {
+      if (msg.phase === 'item-start') {
+        const item = document.querySelector(`#nlm-repair-details .nlm-repair-item[data-url="${CSS.escape(msg.url)}"]`);
+        const statusEl = item?.querySelector('.nlm-repair-status');
+        if (statusEl) {
+          statusEl.className = 'nlm-repair-status';
+          statusEl.textContent = '';
+          const spinner = document.createElement('span');
+          spinner.className = 'nlm-repair-spinner';
+          statusEl.appendChild(spinner);
+        }
+      } else if (msg.phase === 'item-done') {
+        const result = msg.result as { url: string; status: string; title?: string; error?: string };
+        const item = document.querySelector(`#nlm-repair-details .nlm-repair-item[data-url="${CSS.escape(result.url)}"]`);
+        const statusEl = item?.querySelector('.nlm-repair-status');
+        if (statusEl) {
+          if (result.status === 'success') {
+            statusEl.className = 'nlm-repair-status nlm-repair-success';
+            statusEl.textContent = `✓ ${result.title || ct('success')}`;
+          } else {
+            statusEl.className = 'nlm-repair-status nlm-repair-error';
+            statusEl.textContent = `✗ ${result.error || ct('failed')}`;
+          }
+        }
+      } else if (msg.phase === 'done') {
+        updateRepairBanner(msg.results || [], wechatUrls);
+        port.disconnect();
+      } else if (msg.phase === 'error') {
+        updateRepairBanner([], wechatUrls);
+        port.disconnect();
+      }
     });
   });
 

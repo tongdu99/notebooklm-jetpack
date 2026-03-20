@@ -214,8 +214,35 @@ export default defineBackground(() => {
     }
   });
 
-  // Handle PDF export via persistent port connection (supports progress updates)
+  // Handle long-running operations via persistent port connections (supports progress updates)
   chrome.runtime.onConnect.addListener((port) => {
+    // ── Rescue / Repair sources ──
+    if (port.name === 'rescue-sources' || port.name === 'repair-wechat') {
+      // The port's sender.tab.id is the NLM tab that initiated the repair
+      const senderTabId = port.sender?.tab?.id;
+      port.onMessage.addListener(async (msg) => {
+        const urls: string[] = msg.urls || [];
+        const sendProgress = (data: Record<string, unknown>) => {
+          try { port.postMessage(data); } catch { /* disconnected */ }
+        };
+
+        try {
+          if (port.name === 'repair-wechat') {
+            // Repair WeChat sources with per-URL progress
+            const results = await repairWechatSourcesWithProgress(urls, senderTabId, sendProgress);
+            sendProgress({ phase: 'done', results });
+          } else {
+            // Rescue failed sources with per-URL progress
+            const results = await rescueSourcesWithProgress(urls, senderTabId, sendProgress);
+            sendProgress({ phase: 'done', results });
+          }
+        } catch (err) {
+          sendProgress({ phase: 'error', error: String(err) });
+        }
+      });
+      return;
+    }
+
     if (port.name === 'podcast-download') {
       port.onMessage.addListener(async (msg) => {
         if (msg.type !== 'DOWNLOAD_PODCAST') return;
@@ -388,10 +415,12 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener(
     (
       message: MessageType,
-      _sender: chrome.runtime.MessageSender,
+      sender: chrome.runtime.MessageSender,
       sendResponse: (response: MessageResponse) => void
     ) => {
-      handleMessage(message)
+      // Pass sender tab ID so import operations target the correct notebook tab
+      const senderTabId = sender.tab?.id;
+      handleMessage(message, senderTabId)
         .then((data) => sendResponse({ success: true, data }))
         .catch((error) =>
           sendResponse({
@@ -472,7 +501,7 @@ function needsTabBasedExtraction(url: string): boolean {
     || /^https?:\/\/developer\.huawei\.com\//.test(url);
 }
 
-async function rescueSources(urls: string[]): Promise<RescueResult[]> {
+async function rescueSources(urls: string[], targetTabId?: number): Promise<RescueResult[]> {
   const results: RescueResult[] = [];
 
   // Split: SPA sites go to tab-based extraction, others use fetch
@@ -481,7 +510,7 @@ async function rescueSources(urls: string[]): Promise<RescueResult[]> {
 
   // Handle tab-based URLs via the same repair/extract pipeline
   if (tabUrls.length > 0) {
-    const tabResults = await repairDynamicSources(tabUrls);
+    const tabResults = await repairDynamicSources(tabUrls, false, targetTabId);
     results.push(...tabResults);
   }
 
@@ -532,7 +561,7 @@ async function rescueSources(urls: string[]): Promise<RescueResult[]> {
       const content = `# ${title}\n\nSource: ${url}\n\n${markdown}`;
 
       // Import as text to NotebookLM
-      const success = await importText(content, title);
+      const success = await importText(content, title, targetTabId);
       results.push({
         url,
         status: success ? 'success' : 'error',
@@ -560,15 +589,220 @@ async function rescueSources(urls: string[]): Promise<RescueResult[]> {
 // Open page in browser tab → extract rendered content → import as text
 // Tab-based content extraction for dynamic/SPA sites (X.com, WeChat, etc.)
 // extractOnly=true returns content without importing to NotebookLM (for PDF export)
-async function repairDynamicSources(urls: string[], extractOnly = false): Promise<RescueResult[]> {
-  return _tabBasedExtract(urls, extractOnly);
+async function repairDynamicSources(urls: string[], extractOnly = false, targetTabId?: number): Promise<RescueResult[]> {
+  return _tabBasedExtract(urls, extractOnly, targetTabId);
 }
 
-async function repairWechatSources(urls: string[]): Promise<RescueResult[]> {
-  return _tabBasedExtract(urls, false);
+async function repairWechatSources(urls: string[], targetTabId?: number): Promise<RescueResult[]> {
+  return _tabBasedExtract(urls, false, targetTabId);
 }
 
-async function _tabBasedExtract(urls: string[], extractOnly = false): Promise<RescueResult[]> {
+type ProgressCallback = (data: Record<string, unknown>) => void;
+
+async function rescueSourcesWithProgress(
+  urls: string[],
+  targetTabId?: number,
+  sendProgress?: ProgressCallback
+): Promise<RescueResult[]> {
+  const results: RescueResult[] = [];
+
+  const tabUrls = urls.filter(needsTabBasedExtraction);
+  const fetchUrls = urls.filter(u => !needsTabBasedExtraction(u));
+
+  if (tabUrls.length > 0) {
+    const tabResults = await _tabBasedExtractWithProgress(tabUrls, false, targetTabId, sendProgress);
+    results.push(...tabResults);
+  }
+
+  for (const url of fetchUrls) {
+    sendProgress?.({ phase: 'item-start', url });
+    try {
+      const resp = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!resp.ok) {
+        const r: RescueResult = { url, status: 'error', error: `HTTP ${resp.status}` };
+        results.push(r);
+        sendProgress?.({ phase: 'item-done', url, result: r });
+        continue;
+      }
+      const html = await resp.text();
+      let markdown: string, title: string;
+      try {
+        const cvt = await convertHtmlToMarkdown(html);
+        markdown = cvt.markdown;
+        title = cvt.title || new URL(url).hostname;
+      } catch {
+        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        title = titleMatch?.[1]?.trim()?.replace(/\s+/g, ' ') || new URL(url).hostname;
+        markdown = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
+      const contentIssue = detectBlockedContent(markdown, html, url);
+      if (contentIssue) {
+        const r: RescueResult = { url, status: 'error', error: contentIssue };
+        results.push(r);
+        sendProgress?.({ phase: 'item-done', url, result: r });
+        continue;
+      }
+      const content = `# ${title}\n\nSource: ${url}\n\n${markdown}`;
+      const success = await importText(content, title, targetTabId);
+      const r: RescueResult = { url, status: success ? 'success' : 'error', title, error: success ? undefined : '导入 NotebookLM 失败' };
+      results.push(r);
+      sendProgress?.({ phase: 'item-done', url, result: r });
+      if (urls.indexOf(url) < urls.length - 1) await new Promise(res => setTimeout(res, 3000));
+    } catch (error) {
+      const r: RescueResult = { url, status: 'error', error: error instanceof Error ? error.message : 'Unknown error' };
+      results.push(r);
+      sendProgress?.({ phase: 'item-done', url, result: r });
+    }
+  }
+  return results;
+}
+
+async function repairWechatSourcesWithProgress(
+  urls: string[],
+  targetTabId?: number,
+  sendProgress?: ProgressCallback
+): Promise<RescueResult[]> {
+  return _tabBasedExtractWithProgress(urls, false, targetTabId, sendProgress);
+}
+
+async function _tabBasedExtractWithProgress(
+  urls: string[],
+  extractOnly = false,
+  targetTabId?: number,
+  sendProgress?: ProgressCallback
+): Promise<RescueResult[]> {
+  const results: RescueResult[] = [];
+
+  for (const url of urls) {
+    sendProgress?.({ phase: 'item-start', url });
+    try {
+      let openUrl = url;
+      const xArticleFocusMatch = url.match(/^https?:\/\/(www\.)?(x\.com|twitter\.com)\/(\w+)\/article\/(\d+)/);
+      if (xArticleFocusMatch) { /* already focus mode */ }
+
+      const tab = await chrome.tabs.create({ url: openUrl, active: false });
+      if (!tab.id) throw new Error('Failed to create tab');
+
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 15000);
+        const listener = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+          if (tabId === tab.id && changeInfo.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener); clearTimeout(timeout); resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+      });
+
+      const isXcom = /^https?:\/\/(www\.)?(x\.com|twitter\.com)\//.test(url);
+      const renderWait = isXcom ? 8000 : needsTabBasedExtraction(url) ? 5000 : 3000;
+      await new Promise(r => setTimeout(r, renderWait));
+
+      const extractResult = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: _tabExtractorFunction,
+      });
+
+      await chrome.tabs.remove(tab.id);
+
+      const extracted = extractResult?.[0]?.result as { success: boolean; title?: string; content?: string; error?: string } | undefined;
+      if (!extracted?.success || !extracted.content) {
+        const r: RescueResult = { url, status: 'error', error: extracted?.error || '无法提取内容' };
+        results.push(r);
+        sendProgress?.({ phase: 'item-done', url, result: r });
+        continue;
+      }
+      if (extracted.content.length < 100) {
+        const r: RescueResult = { url, status: 'error', error: '提取到的内容太少，可能被拦截' };
+        results.push(r);
+        sendProgress?.({ phase: 'item-done', url, result: r });
+        continue;
+      }
+
+      const title = extracted.title || new URL(url).hostname;
+      const rawContent = extracted.content;
+      const content = `# ${title}\n\nSource: ${url}\n\n${rawContent}`;
+
+      if (extractOnly) {
+        const r: RescueResult = { url, status: 'success', title, content: rawContent };
+        results.push(r);
+        sendProgress?.({ phase: 'item-done', url, result: r });
+      } else {
+        const success = await importText(content, title, targetTabId);
+        const r: RescueResult = { url, status: success ? 'success' : 'error', title, content: rawContent, error: success ? undefined : '导入 NotebookLM 失败' };
+        results.push(r);
+        sendProgress?.({ phase: 'item-done', url, result: r });
+      }
+
+      if (urls.indexOf(url) < urls.length - 1) await new Promise(r => setTimeout(r, 3000));
+    } catch (error) {
+      const r: RescueResult = { url, status: 'error', error: error instanceof Error ? error.message : 'Unknown error' };
+      results.push(r);
+      sendProgress?.({ phase: 'item-done', url, result: r });
+    }
+  }
+  return results;
+}
+
+// Shared extractor function injected into tabs (must be self-contained, no closures)
+function _tabExtractorFunction(): { success: boolean; title?: string; content?: string; error?: string } {
+  const currentUrl = window.location.href;
+
+  // ── X.com / Twitter extractor ──
+  if (currentUrl.includes('x.com/') || currentUrl.includes('twitter.com/')) {
+    const xArticleContent = document.querySelector('[data-testid="twitterArticleRichTextView"]');
+    if (xArticleContent) {
+      const titleEl = document.querySelector('[data-testid="twitter-article-title"]');
+      const title = titleEl?.textContent?.trim()
+        || document.title.replace(/ \/ X$/, '').replace(/ on X:.*$/, '').trim();
+      const content = (xArticleContent as HTMLElement).innerText?.trim() || '';
+      if (content.length >= 100) return { success: true, title, content };
+    }
+    const tweetTexts = document.querySelectorAll('article [data-testid="tweetText"]');
+    if (tweetTexts.length > 0) {
+      const title = document.title.replace(/ \/ X$/, '').replace(/ on X:.*$/, '').trim();
+      const parts: string[] = [];
+      tweetTexts.forEach(el => {
+        const text = (el as HTMLElement).innerText?.trim();
+        if (text && text.length > 10) parts.push(text);
+      });
+      const content = parts.join('\n\n');
+      if (content.length >= 50) return { success: true, title, content };
+    }
+    return { success: false, error: 'X.com: 未找到文章或推文内容' };
+  }
+
+  // ── Huawei Developer Docs extractor ──
+  if (currentUrl.includes('developer.huawei.com')) {
+    const docTitle = document.querySelector('h1')?.textContent?.trim()
+      || document.title.replace(/-.*$/, '').trim();
+    const docContent = document.querySelector('.markdown-body')
+      || document.querySelector('#mark .idpContent')
+      || document.querySelector('.document-content-html')
+      || document.querySelector('#document-content .layout-content');
+    if (docContent && (docContent as HTMLElement).innerText?.trim().length > 50) {
+      return { success: true, title: docTitle, content: (docContent as HTMLElement).innerText.trim() };
+    }
+    return { success: false, error: '华为文档内容提取失败' };
+  }
+
+  // ── WeChat / Generic extractor ──
+  const contentEl = document.querySelector('#js_content')
+    || document.querySelector('.rich_media_content')
+    || document.querySelector('article')
+    || document.querySelector('.rich_media_area_primary');
+  const titleEl = document.querySelector('.rich_media_title, #activity-name, h1');
+  const title = titleEl?.textContent?.trim() || document.title || '';
+  if (!contentEl || contentEl.textContent?.trim().length === 0) {
+    return { success: false, error: '页面内容为空，可能需要在微信中验证' };
+  }
+  const content = (contentEl as HTMLElement).innerText || contentEl.textContent || '';
+  return { success: true, title, content: content.trim() };
+}
+
+async function _tabBasedExtract(urls: string[], extractOnly = false, targetTabId?: number): Promise<RescueResult[]> {
   const results: RescueResult[] = [];
 
   for (const url of urls) {
@@ -613,75 +847,7 @@ async function _tabBasedExtract(urls: string[], extractOnly = false): Promise<Re
       // Extract content from the rendered page (site-specific extractors)
       const extractResult = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => {
-          const currentUrl = window.location.href;
-
-          // ── X.com / Twitter extractor ──
-          // Articles: [data-testid="twitterArticleRichTextView"] for long-form articles
-          // Regular tweets/threads: [data-testid="tweetText"] for tweet content
-          if (currentUrl.includes('x.com/') || currentUrl.includes('twitter.com/')) {
-            // Try Article extractor first (long-form X Articles)
-            const xArticleContent = document.querySelector('[data-testid="twitterArticleRichTextView"]');
-            if (xArticleContent) {
-              const titleEl = document.querySelector('[data-testid="twitter-article-title"]');
-              const title = titleEl?.textContent?.trim()
-                || document.title.replace(/ \/ X$/, '').replace(/ on X:.*$/, '').trim();
-              const content = (xArticleContent as HTMLElement).innerText?.trim() || '';
-              if (content.length >= 100) {
-                return { success: true, title, content };
-              }
-            }
-
-            // Fallback: extract tweet text from the main tweet (for regular posts/threads)
-            const tweetTexts = document.querySelectorAll('article [data-testid="tweetText"]');
-            if (tweetTexts.length > 0) {
-              const title = document.title.replace(/ \/ X$/, '').replace(/ on X:.*$/, '').trim();
-              const parts: string[] = [];
-              tweetTexts.forEach(el => {
-                const text = (el as HTMLElement).innerText?.trim();
-                if (text && text.length > 10) parts.push(text);
-              });
-              const content = parts.join('\n\n');
-              if (content.length >= 50) {
-                return { success: true, title, content };
-              }
-            }
-
-            return { success: false, error: 'X.com: 未找到文章或推文内容' };
-          }
-
-          // ── Huawei Developer Docs extractor ──
-          if (currentUrl.includes('developer.huawei.com')) {
-            const docTitle = document.querySelector('h1')?.textContent?.trim()
-              || document.title.replace(/-.*$/, '').trim();
-            // Huawei uses Angular — content is in .markdown-body or #mark .idpContent
-            const docContent = document.querySelector('.markdown-body')
-              || document.querySelector('#mark .idpContent')
-              || document.querySelector('.document-content-html')
-              || document.querySelector('#document-content .layout-content');
-            if (docContent && (docContent as HTMLElement).innerText?.trim().length > 50) {
-              return { success: true, title: docTitle, content: (docContent as HTMLElement).innerText.trim() };
-            }
-            return { success: false, error: '华为文档内容提取失败' };
-          }
-
-          // ── WeChat / Generic extractor ──
-          const contentEl = document.querySelector('#js_content')
-            || document.querySelector('.rich_media_content')
-            || document.querySelector('article')
-            || document.querySelector('.rich_media_area_primary');
-
-          const titleEl = document.querySelector('.rich_media_title, #activity-name, h1');
-          const title = titleEl?.textContent?.trim() || document.title || '';
-
-          if (!contentEl || contentEl.textContent?.trim().length === 0) {
-            return { success: false, error: '页面内容为空，可能需要在微信中验证' };
-          }
-
-          // Get text content, preserving some structure
-          const content = (contentEl as HTMLElement).innerText || contentEl.textContent || '';
-          return { success: true, title, content: content.trim() };
-        },
+        func: _tabExtractorFunction,
       });
 
       // Close the tab
@@ -722,7 +888,7 @@ async function _tabBasedExtract(urls: string[], extractOnly = false): Promise<Re
         results.push({ url, status: 'success', title, content: rawContent });
       } else {
         // Import as text
-        const success = await importText(content, title);
+        const success = await importText(content, title, targetTabId);
         results.push({
           url,
           status: success ? 'success' : 'error',
@@ -747,13 +913,13 @@ async function _tabBasedExtract(urls: string[], extractOnly = false): Promise<Re
   return results;
 }
 
-async function handleMessage(message: MessageType): Promise<unknown> {
+async function handleMessage(message: MessageType, senderTabId?: number): Promise<unknown> {
   switch (message.type) {
     case 'IMPORT_URL':
-      return await importUrl(message.url);
+      return await importUrl(message.url, senderTabId);
 
     case 'IMPORT_BATCH':
-      return await importBatch(message.urls);
+      return await importBatch(message.urls, undefined, senderTabId);
 
     case 'PARSE_RSS':
       return await parseRssFeed(message.rssUrl);
@@ -895,11 +1061,11 @@ async function handleMessage(message: MessageType): Promise<unknown> {
           if (pair.answer) { lines.push(`## 🤖 ${platform}`, '', pair.answer, ''); }
           lines.push('---', '');
         }
-        return await importText(lines.join('\n'), conv.title);
+        return await importText(lines.join('\n'), conv.title, senderTabId);
       }
       // Fallback: old message-based import
       const formattedText = formatConversationForImport(conv, message.selectedMessageIds);
-      return await importText(formattedText, conv.title);
+      return await importText(formattedText, conv.title, senderTabId);
     }
 
     case 'FETCH_PODCAST': {
@@ -930,11 +1096,11 @@ async function handleMessage(message: MessageType): Promise<unknown> {
     }
 
     case 'RESCUE_SOURCES': {
-      return await rescueSources(message.urls);
+      return await rescueSources(message.urls, senderTabId);
     }
 
     case 'REPAIR_WECHAT_SOURCES': {
-      return await repairWechatSources(message.urls);
+      return await repairWechatSources(message.urls, senderTabId);
     }
 
     case 'GENERATE_PDF':
