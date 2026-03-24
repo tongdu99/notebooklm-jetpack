@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Youtube, Loader2, CheckCircle, AlertCircle, PlayCircle, ListVideo, User } from 'lucide-react';
 import type { ImportProgress, YouTubeResult, YouTubeVideoItem, YouTubeSourceInfo } from '@/lib/types';
 import { t } from '@/lib/i18n';
@@ -61,6 +61,15 @@ export function YouTubeImport({ initialUrl, onProgress }: Props) {
       },
     );
   };
+
+  // Auto-fetch when opened from a YouTube tab (initialUrl provided)
+  const autoFetched = useRef(false);
+  useEffect(() => {
+    if (initialUrl && isYouTubeUrl(initialUrl) && !autoFetched.current) {
+      autoFetched.current = true;
+      handleFetch();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleImport = () => {
     const toImport = videos.filter((v) => selected.has(v.id));
