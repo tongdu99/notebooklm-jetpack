@@ -497,6 +497,14 @@ async function importTextToNotebookLM(text: string, title?: string): Promise<boo
     if (!insertButton) {
       throw new Error('Insert button not found');
     }
+    // Snapshot existing source titles before inserting, so we can identify the new source
+    // reliably regardless of list ordering (NotebookLM may reorder after a source is viewed).
+    const defaultNames = ['粘贴的文字', '复制的文字', 'Copied text', 'Pasted text', 'Pasted Text'];
+    const titlesBeforeInsert = new Set(
+      Array.from(document.querySelectorAll('.single-source-container'))
+        .map(el => (el.querySelector('.source-title') ?? el.querySelector('.source-title-column'))?.textContent?.trim() ?? '')
+    );
+
     // Wait for button to be enabled (disabled while processing input)
     for (let i = 0; i < 10; i++) {
       if (!(insertButton as HTMLButtonElement).disabled) break;
@@ -519,21 +527,34 @@ async function importTextToNotebookLM(text: string, title?: string): Promise<boo
       // Close any open source viewer panel so the source list is accessible for rename
       dismissAnyDialog();
       await delay(300);
-      const defaultNames = ['粘贴的文字', '复制的文字', 'Copied text', 'Pasted text', 'Pasted Text'];
       const allSources = document.querySelectorAll('.single-source-container');
-      if (allSources.length > 0) {
-        const lastSource = allSources[allSources.length - 1];
-        // Prefer .source-title (inner span) over .source-title-column (may contain extra nested text)
-        const sourceTitle = (lastSource.querySelector('.source-title') ?? lastSource.querySelector('.source-title-column'))?.textContent?.trim();
-        if (sourceTitle && defaultNames.includes(sourceTitle)) {
-          console.log(`[importText] Source still has default name "${sourceTitle}", renaming to "${title}"`);
-          try {
-            await renameSource(sourceTitle, title);
-          } catch (e) {
-            console.warn('[importText] Rename failed (non-fatal):', e);
-            // Ensure any leftover dialog is dismissed
-            dismissAnyDialog();
+      // Find the newly added source: prefer one with a default name that wasn't in the
+      // pre-insert snapshot. This handles list reordering after a source has been viewed.
+      let sourceTitle: string | undefined;
+      for (let i = allSources.length - 1; i >= 0; i--) {
+        const t = (allSources[i].querySelector('.source-title') ?? allSources[i].querySelector('.source-title-column'))?.textContent?.trim();
+        if (t && defaultNames.includes(t) && !titlesBeforeInsert.has(t)) {
+          sourceTitle = t;
+          break;
+        }
+      }
+      // Fallback: any source with a default name (covers case where previous rename also failed)
+      if (!sourceTitle) {
+        for (let i = allSources.length - 1; i >= 0; i--) {
+          const t = (allSources[i].querySelector('.source-title') ?? allSources[i].querySelector('.source-title-column'))?.textContent?.trim();
+          if (t && defaultNames.includes(t)) {
+            sourceTitle = t;
+            break;
           }
+        }
+      }
+      if (sourceTitle) {
+        console.log(`[importText] Source still has default name "${sourceTitle}", renaming to "${title}"`);
+        try {
+          await renameSource(sourceTitle, title);
+        } catch (e) {
+          console.warn('[importText] Rename failed (non-fatal):', e);
+          dismissAnyDialog();
         }
       }
     }
