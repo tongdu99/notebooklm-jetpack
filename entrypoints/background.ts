@@ -200,7 +200,9 @@ export default defineBackground(() => {
         if (!results?.[0]?.result) throw new Error('Could not capture page content');
         const { html, title: tabTitle } = results[0].result;
         const { markdown, title } = await convertHtmlToMarkdown(html);
-        await importText(markdown, tabTitle || title);
+        const pageTitle = tabTitle || title;
+        const contentWithHeader = `# [${pageTitle}](${tab.url})\n\n${markdown}`;
+        await importText(contentWithHeader, pageTitle);
       } catch (error) {
         console.error('Context menu capture failed:', error);
       }
@@ -931,7 +933,8 @@ async function handleMessage(message: MessageType, senderTabId?: number): Promis
 
       const { markdown, title } = await convertHtmlToMarkdown(extracted.html);
       const pageTitle = extracted.title || title;
-      const success = await importText(markdown, pageTitle, senderTabId);
+      const contentWithHeader = `# [${pageTitle}](${tabUrl})\n\n${markdown}`;
+      const success = await importText(contentWithHeader, pageTitle, senderTabId);
       if (!success) throw new Error('Import failed. Make sure NotebookLM is open.');
       return true;
     }
